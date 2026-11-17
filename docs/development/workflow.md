@@ -24,9 +24,9 @@ pytest -q
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
-Alternatively, `docker compose up --build` uses the existing Linux/WSL2 host-network configuration and loopback binding. The container uses Python 3.12. See the [README](../../README.md) for smoke requests and Docker networking caveats. Do not broaden the bind address to make the demo accessible remotely.
+Alternatively, follow the [README](../../README.md) to configure `.env` and run `docker compose up --build`. Compose publishes the API only on host loopback and keeps PostgreSQL on a private internal network. The API container uses Python 3.12. Do not broaden the host bind address to make the demo accessible remotely.
 
-The current tests cover API health/draft responses and selected policy allow/deny cases. They do not establish production security, durable state or authenticated approvals.
+The tests cover API health/draft responses, selected policy allow/deny cases and database-probe behavior. Opt-in integration tests validate PostgreSQL/pgvector connectivity and runtime-role restrictions. They do not establish production security, durable workflow state or authenticated approvals.
 
 ## Project context
 

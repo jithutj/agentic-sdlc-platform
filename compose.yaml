@@ -1,7 +1,22 @@
 services:
   api:
-    build: .
-    network_mode: host # Linux/WSL2 only; binds 127.0.0.1 inside host network
+    build:
+      context: .
+      target: runtime
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    ports:
+      - "127.0.0.1:${API_PORT:-8000}:8000"
+    networks: [default, database]
+    environment: &database_environment
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-agentic_sdlc}
+      DB_USER: sdlc_app
+      DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      DB_CONNECT_TIMEOUT: "3"
+    depends_on:
+      db:
+        condition: service_healthy
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -10,3 +25,51 @@ services:
     pids_limit: 128
     mem_limit: 512m
     cpus: 1.0
+
+  db:
+    image: pgvector/pgvector:0.8.7-pg17-bookworm@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-agentic_sdlc}
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
+      POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
+    networks: [database]
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./docker/postgres/001-init.sh:/docker-entrypoint-initdb.d/001-init.sh:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -h 127.0.0.1 -U postgres -d \"$$POSTGRES_DB\""]
+      interval: 5s
+      timeout: 3s
+      retries: 12
+      start_period: 10s
+    security_opt:
+      - no-new-privileges:true
+
+  tests:
+    profiles: [test]
+    build:
+      context: .
+      target: test
+    environment:
+      <<: *database_environment
+      RUN_DB_INTEGRATION: "1"
+    networks: [database]
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    tmpfs:
+      - /tmp:size=64m,mode=1777
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    command: ["pytest", "-q", "-p", "no:cacheprovider"]
+
+networks:
+  database:
+    internal: true
+
+volumes:
+  postgres_data:
