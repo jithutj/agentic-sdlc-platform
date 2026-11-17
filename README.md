@@ -1,6 +1,6 @@
 # Agentic SDLC Platform — Local Starter v0.1
 
-**Scope:** Local FastAPI + LangGraph draft demonstration with a PostgreSQL/pgvector connectivity foundation (Phase 1A). **Not a working autonomous coding platform.** No OpenHands, RAG, durable workflow checkpoints, authenticated approval service, external integrations or production-ready isolation are implemented.
+**Scope:** Local FastAPI + LangGraph draft demonstration with PostgreSQL/pgvector, durable workflow checkpoints and an internal human-review interrupt/resume foundation (Task 003). **Not a working autonomous coding platform.** No OpenHands, RAG, authenticated approval issuer, external integrations or production-ready isolation are implemented. Approval/resume is not exposed over HTTP.
 
 ## Quick start in WSL2 Ubuntu
 
@@ -21,7 +21,7 @@ curl -s http://127.0.0.1:8000/health
 curl -s -X POST http://127.0.0.1:8000/draft -H 'Content-Type: application/json' -d '{"project_id":"demo","run_id":"r1","objective":"Draft an API design"}'
 ```
 
-The Python-only demo needs no database: `/health` and `/draft` still work; `/db-health` returns HTTP 503 until configured. Python does not automatically load `.env`.
+The Python-only demo defaults to request-local memory previews: `/health` and `/draft` still work; `/db-health` returns HTTP 503 until configured. Python does not automatically load `.env`. Compose requires PostgreSQL persistence; it never silently falls back to memory.
 
 ## Docker database setup
 
@@ -52,9 +52,11 @@ The API publishes only `127.0.0.1:8000` by default (`API_PORT` changes only the 
 
 ## Initialization and configuration
 
-On an **empty** named volume, the Postgres entrypoint creates the database and runs [001-init.sh](docker/postgres/001-init.sh). It enables `vector` and creates the non-superuser `sdlc_app` login with database-connect and schema-usage privileges, without schema-create privileges. The API receives only this role's password; the bootstrap admin password stays in the database service. No application tables, embeddings or workflow checkpoints are created.
+On an **empty** named volume, the Postgres entrypoint creates the database and runs [001-init.sh](docker/postgres/001-init.sh). It enables `vector` and creates the non-superuser `sdlc_app` login without schema-create privileges. A separate one-shot `migrate` service uses the bootstrap-admin password to initialize the private workflow schema and checkpoint tables. The API receives only runtime credentials and starts after successful migration. Existing Phase 1A volumes are upgraded additively; do not reset them.
 
-Compose maps `DB_PASSWORD` to the initialization script and the API. The API reads `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` and optional `DB_CONNECT_TIMEOUT` (default 3 seconds, allowed 2–10). It opens and closes one read-only connection per probe, with a 3-second statement timeout. These bound the driver connection/query stages, not a strict whole-request deadline including DNS resolution. There is no pool or ORM yet—this is analogous to a small PDO connectivity check before adding Magento resource models or NestJS repositories.
+Compose maps `DB_PASSWORD` to the initialization script and the API. The API reads `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` and optional `DB_CONNECT_TIMEOUT` (default 3 seconds, allowed 2–10). `/db-health` opens one read-only connection per probe. Workflows use separate read/write connections and 3-second statement/lock timeouts. These bound individual stages, not a strict whole-request deadline including DNS. There is no pool or ORM yet.
+
+Compose sets `WORKFLOW_PERSISTENCE=postgres`. `/draft` retains its response fields and adds a server-generated `thread_id`. A repeated project/run pair returns 409 without revealing the existing state. The draft now pauses at a real review interrupt. No HTTP state lookup, approval or resume endpoint exists. See [workflow persistence](docs/platform/workflow-persistence.md) for identity mapping, internal resume, permissions and restart verification.
 
 Initialization runs only once. Changing `.env` does **not** rotate passwords, rename databases or rerun scripts on an existing volume. Coordinate credential changes with an authorized database administrator; never delete the volume to fix a login failure. A host Python process cannot use Compose DNS name `db` or reach this database through a published port. Use the container workflow for database tests, or explicitly configure a separately managed development database.
 
@@ -72,7 +74,7 @@ Integration tests are skipped by default. After Docker setup, run all tests, inc
 docker compose --profile test run --build --rm tests
 ```
 
-`--rm` removes only the finished test container; it does not remove the named database volume. For a separately configured database, `RUN_DB_INTEGRATION=1 pytest -q -m integration` opts in using the `DB_*` environment variables. Integration tests perform reads and a failed login; they do not create or delete data.
+`--rm` removes only the finished test container; it does not remove the named database volume. The original connectivity tests remain read-only. New workflow integration tests add synthetic runs/checkpoints/approval fixtures and retain them without deleting data. Use an isolated test database/project. Standalone configuration and opt-in flags are documented in [workflow persistence](docs/platform/workflow-persistence.md).
 
 To verify persistence without adding test data, record the cluster identifier and enabled extension, recreate the database container with its existing volume, and repeat the query. The identifier and extension should remain unchanged:
 
@@ -98,15 +100,15 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 - API is unauthenticated and MUST stay on localhost. Never publish it or attach real tokens.
 - `authorize()` is a testable policy function, **not** wired to external tools. A2 approval objects are caller-supplied; real approvals require independently authenticated human identity, immutable records and one-time consumption.
 - No production or merge operations exist. No arbitrary shell execution, GitHub writes, Linear writes or model calls exist.
-- Workflow state remains in-memory and is not stored in PostgreSQL.
+- Compose persists workflow state and review interrupts. Python-only memory previews are not durable. There is no authenticated approval/resume API.
 - Compose isolates the database on an internal network and retains API container restrictions; it is not a full hardened sandbox. Local Docker administrators can inspect container environment credentials.
 - Pin dependencies and scan images before any real deployment.
 
 ## Next implementation gates
 
-1. Add authenticated API, project registry, application schema/durable run state, append-only audit and deny-by-default PEP wired to *every* tool adapter. PostgreSQL connectivity alone does not supply these capabilities.
-2. Implement server-issued, one-time human approval bound to exact resource and artifact digest.
-3. Add LangGraph durable checkpoints, interrupt/resume and restart tests.
+1. Add authenticated API, trusted project membership, append-only audit and deny-by-default PEP wired to *every* future tool adapter. The current run registry does not establish authenticated tenancy.
+2. Add an independently authenticated approval issuer and scoped retrieval/resume API. Internal resume already checks one-use server records bound to exact checkpoints/state digests.
+3. Extend checkpoint recovery, retention and graph-version migration beyond the current deterministic draft/review workflow.
 4. Add isolated OpenHands execution without host Docker socket, credentials or unrestricted network.
 5. Add project-scoped LangChain RAG and SEC-01..SEC-12 tests.
 6. Only then connect Linear/GitHub read-only; separately authorize narrow writes.
@@ -118,5 +120,6 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 - [Development workflow](docs/development/workflow.md): local development, validation and agent handoffs.
 - [Platform architecture](docs/platform/architecture.md): confirmed implementation and clearly separated future plans.
 - [Security guardrails](docs/platform/security.md): minimum development boundaries and current limitations.
+- [Workflow persistence](docs/platform/workflow-persistence.md): checkpoints, interrupts, internal approval gates, migrations and restart verification.
 
 This repository builds a reusable platform, not the Redeeming Light website. Project-specific documents stay outside default coding-agent context and are loaded only for relevant tasks. Previously named platform/security/project reference documents are not present here; their contents are not assumed by this documentation.

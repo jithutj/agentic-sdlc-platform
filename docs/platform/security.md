@@ -16,8 +16,12 @@ These are minimum development rules, not a production-security certification. Th
 
 ## Current limitations and future gates
 
-The draft endpoint does not invoke `authorize()`. The policy's audit flag is an input, not evidence of durable audit logging. Caller-supplied approvals have no authenticated identity, immutable record or one-time consumption. A3 does not grant production capabilities. The returned review status does not suspend execution for approval.
+The draft endpoint does not invoke `authorize()`. The policy's audit flag is an input, not durable audit logging. Its caller-supplied demo approvals have no authenticated identity or one-time consumption; workflow resume does not use that model. A3 does not grant production capabilities.
 
-Before adding real integrations, require independently authenticated human approvals bound to project/run, capability, resource and exact artifact digest; server-side expiry and one-time consumption; durable audit; and enforcement on every tool adapter. Authentication, isolation and restart behavior need appropriate tests before any production use. These are future requirements, not implemented controls.
+Compose now persists a real LangGraph review interrupt. Internal resume checks a separate server-side approval table against the immutable run identity, pending checkpoint, state digest and expiry, then reserves the approval once. Runtime credentials cannot issue/edit approvals or change run identities. There is no authenticated approval issuer and no HTTP lookup/approval/resume endpoint. Synthetic approvals are created only by admin-connected integration fixtures. Do not expose internal service methods as routes until independent authentication and project authorization exist.
+
+Checkpoint deserialization disallows custom modules and pickle fallback. Application-level project/run/thread checks are not database tenant isolation. Migration uses separate local bootstrap-admin credentials; the API never receives them. See [workflow persistence](workflow-persistence.md) for permissions, recovery limits and the reservation-before-execution crash boundary.
+
+Before adding real integrations, require independently authenticated human approvals bound to project/run, capability, resource and exact artifact digest; durable audit; and enforcement on every tool adapter. The internal workflow approval gate is not authorization for external writes. Authentication, isolation and recovery need further tests and design before production use.
 
 See [architecture](architecture.md) for source-backed behavior and [workflow](../development/workflow.md) for local validation.
