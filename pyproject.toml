@@ -1,9 +1,17 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools]
+packages = ["app"]
+
 [project]
 name = "agentic-sdlc-starter"
 version = "0.1.0"
 requires-python = ">=3.11"
-dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "pydantic>=2,<3", "langgraph>=0.2,<2"]
+dependencies = ["fastapi>=0.115,<1", "uvicorn>=0.30,<1", "pydantic>=2,<3", "langgraph>=0.2,<2", "psycopg[binary]>=3.2,<4"]
 [project.optional-dependencies]
 dev = ["pytest>=8,<10", "httpx>=0.27,<1"]
 [tool.pytest.ini_options]
 pythonpath = ["."]
+markers = ["integration: requires RUN_DB_INTEGRATION=1 and a configured PostgreSQL database"]
