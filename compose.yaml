@@ -1,0 +1,12 @@
+services:
+  api:
+    build: .
+    network_mode: host # Linux/WSL2 only; binds 127.0.0.1 inside host network
+    read_only: true
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    pids_limit: 128
+    mem_limit: 512m
+    cpus: 1.0
