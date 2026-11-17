@@ -26,7 +26,7 @@ uvicorn app.main:app --host 127.0.0.1 --port 8000
 
 Alternatively, follow the [README](../../README.md) to configure `.env` and run `docker compose up --build`. Compose publishes the API only on host loopback and keeps PostgreSQL on a private internal network. The API container uses Python 3.12. Do not broaden the host bind address to make the demo accessible remotely.
 
-The tests cover API health/draft responses, selected policy allow/deny cases and database-probe behavior. Opt-in integration tests validate PostgreSQL/pgvector connectivity and runtime-role restrictions. They do not establish production security, durable workflow state or authenticated approvals.
+The tests cover API health/draft responses, selected policy allow/deny cases and database-probe behavior. Opt-in integration tests validate PostgreSQL/pgvector, durable workflow interrupts, internal resume and runtime-role restrictions. Workflow tests retain additive synthetic records; use an isolated local test database. See [workflow persistence](../platform/workflow-persistence.md) for setup, authorization limits and restart proof. These checks do not establish production security or authenticated approval issuance.
 
 ## Project context
 

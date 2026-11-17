@@ -1,10 +1,10 @@
-"""Small read-only connectivity probe; no pool, migrations or workflow persistence."""
+"""Environment configuration and a read-only connectivity probe."""
 import os
 
 import psycopg
 
 
-def connection_parameters() -> dict:
+def connection_parameters(*, read_only: bool = True) -> dict:
     """Use separate parameters so passwords never need URL escaping."""
     required = {key: os.environ.get(env, "") for key, env in (
         ("host", "DB_HOST"), ("dbname", "DB_NAME"),
@@ -19,8 +19,9 @@ def connection_parameters() -> dict:
     port = int(os.environ.get("DB_PORT", "5432"))
     if not 2 <= timeout <= 10 or not 1 <= port <= 65535:
         raise ValueError("Database connection bounds are invalid")
+    mode = "on" if read_only else "off"
     return dict(required, port=port, connect_timeout=timeout,
-                options="-c statement_timeout=3000 -c default_transaction_read_only=on")
+                options=f"-c statement_timeout=3000 -c default_transaction_read_only={mode}")
 
 
 def database_ready() -> bool:

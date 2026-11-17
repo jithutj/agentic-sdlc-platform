@@ -14,9 +14,12 @@ services:
       DB_USER: sdlc_app
       DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       DB_CONNECT_TIMEOUT: "3"
+      WORKFLOW_PERSISTENCE: postgres
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     read_only: true
     security_opt:
       - no-new-privileges:true
@@ -47,6 +50,26 @@ services:
     security_opt:
       - no-new-privileges:true
 
+  migrate:
+    build:
+      context: .
+      target: runtime
+    environment:
+      DB_HOST: db
+      DB_PORT: "5432"
+      DB_NAME: ${POSTGRES_DB:-agentic_sdlc}
+      DB_USER: postgres
+      DB_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
+    networks: [database]
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt:
+      - no-new-privileges:true
+    command: ["python", "-m", "app.migrate"]
+
   tests:
     profiles: [test]
     build:
@@ -55,10 +78,15 @@ services:
     environment:
       <<: *database_environment
       RUN_DB_INTEGRATION: "1"
+      RUN_WORKFLOW_INTEGRATION: "1"
+      # Test-only approval fixtures use a separate admin connection, never the API.
+      CHECKPOINT_TEST_ADMIN_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
     networks: [database]
     depends_on:
       db:
         condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
     read_only: true
     tmpfs:
       - /tmp:size=64m,mode=1777
