@@ -18,6 +18,8 @@ A checkpoint is comparable to saving a NestJS job's execution state in PostgreSQ
 
 `workflow.runs` maps the unique `(project_id, run_id)` pair to a server-generated UUID4 `thread_id`, objective SHA-256 digest and graph version `draft-review-v1`. The mapping is persistent, not derived by concatenating caller strings. Runtime SQL privileges allow inserting/reading run records, but not changing or deleting identities. Future retries/lookups retain the recorded thread ID; caller-provided thread IDs are not accepted by `/draft`.
 
+Task 004 adds the separate `requirements-review-v1` graph for `/analysis`, selected internally by the same immutable graph-version record. Existing draft threads retain `draft-review-v1`. Project/run uniqueness spans both entry points. See [LLM gateway](llm-gateway.md) for analysis state, limits and error behavior.
+
 Every internal lookup/resume checks all three identifiers against the registry before loading a checkpoint. The loaded state's project, run, thread, graph version and objective digest must match that registry. Callers cannot select arbitrary checkpoint IDs or supply raw LangGraph config. Session advisory locks serialize operations per thread across processes; a unique project/run constraint prevents concurrent creates from overwriting each other.
 
 These checks prevent identity confusion; they are **not authenticated tenant isolation**. Project IDs are caller labels, and a thread handle is not proof of human identity. The API has no authentication, so it exposes no lookup, approval issuance or resume routes. In-process code and local database operators are trusted. Raw checkpoint access is not an authorization API. Real project membership, authenticated principals and scoped authorization must precede any external retrieval or resume surface.
@@ -29,6 +31,7 @@ The existing first-run Postgres script still creates `vector` and `sdlc_app`. Th
 | Runtime object | `sdlc_app` privileges |
 | --- | --- |
 | `runs`, `approval_uses` | SELECT, INSERT |
+| `llm_attempts` | SELECT, INSERT; append-only analysis budget reservations |
 | `approvals` | SELECT only |
 | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` | SELECT, INSERT, UPDATE |
 | `checkpoint_migrations` | None |
@@ -90,4 +93,4 @@ Repeat the lookup after recreation and compare both state and pending checkpoint
 
 Rollback means stopping the new API and running the previous Phase 1A application against the existing database, leaving the additive `workflow` schema and volume intact. The previous API does not read these checkpoints; persisted reviews remain unavailable until the compatible version returns. Do not drop schema, tables or volumes. Future dependency/graph/schema changes need a compatibility migration before existing threads can resume.
 
-Known limits: no authenticated API, approval issuer, tenant security, durable audit service, retry/recovery UI or checkpoint retention policy. A failure after registry insertion may leave a reserved run with incomplete state; the API returns 503 initially and 409 on later creates, rather than overwriting it. Trusted operators must diagnose such runs. There are no LLM calls, RAG, OpenHands or external integrations.
+Known limits: no authenticated API, approval issuer, tenant security, durable audit service, retry/recovery UI or checkpoint retention policy. A failure after registry insertion may leave a reserved run with incomplete state; the API returns 503 initially and 409 on later creates, rather than overwriting it. Trusted operators must diagnose such runs. Analysis gateway failures instead persist a safe terminal failure state. There are no real LLM API calls, RAG, OpenHands or external integrations.

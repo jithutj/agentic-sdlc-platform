@@ -1,6 +1,6 @@
 # Agentic SDLC Platform — Local Starter v0.1
 
-**Scope:** Local FastAPI + LangGraph draft demonstration with PostgreSQL/pgvector, durable workflow checkpoints and an internal human-review interrupt/resume foundation (Task 003). **Not a working autonomous coding platform.** No OpenHands, RAG, authenticated approval issuer, external integrations or production-ready isolation are implemented. Approval/resume is not exposed over HTTP.
+**Scope:** Local FastAPI + LangGraph draft demonstration with PostgreSQL/pgvector, durable checkpoints, internal human-review interrupt/resume, and a mock-only Requirements Analyst behind a provider-neutral LLM gateway (Task 004). **Not a working autonomous coding platform.** No real LLM API calls, OpenHands, RAG, authenticated approval issuer, external integrations or production-ready isolation are implemented. Approval/resume is not exposed over HTTP.
 
 ## Quick start in WSL2 Ubuntu
 
@@ -60,6 +60,20 @@ Compose sets `WORKFLOW_PERSISTENCE=postgres`. `/draft` retains its response fiel
 
 Initialization runs only once. Changing `.env` does **not** rotate passwords, rename databases or rerun scripts on an existing volume. Coordinate credential changes with an authorized database administrator; never delete the volume to fix a login failure. A host Python process cannot use Compose DNS name `db` or reach this database through a published port. Use the container workflow for database tests, or explicitly configure a separately managed development database.
 
+## Mock Requirements Analyst
+
+Keep `LLM_PROVIDER=mock`; real provider names fail closed and no provider credentials are needed. Docker setup above also adds an append-only budget ledger without resetting existing data.
+
+```bash
+curl -s http://127.0.0.1:8000/analysis \
+  -H 'Content-Type: application/json' \
+  -d '{"project_id":"demo","run_id":"analysis-001","objective":"Describe a local issue tracker"}'
+```
+
+The response contains structured requirements, usage reservations, a server-generated thread ID and `awaiting_human_review`. It pauses at a real review interrupt. Output is a deterministic template and remains an untrusted draft. Use a new project/run pair for each creation; `/draft` and `/analysis` share uniqueness. No public approval/resume endpoint exists.
+
+Server settings bound input/output size, provider timeout, total attempts and per-run byte-based budget; callers cannot override them. See [LLM gateway](docs/platform/llm-gateway.md) for configuration ranges, failure statuses, persistence and limitations. Existing `/draft` remains unchanged.
+
 ## Tests and persistence verification
 
 Run unit/regression tests in the activated local virtual environment:
@@ -99,7 +113,7 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 
 - API is unauthenticated and MUST stay on localhost. Never publish it or attach real tokens.
 - `authorize()` is a testable policy function, **not** wired to external tools. A2 approval objects are caller-supplied; real approvals require independently authenticated human identity, immutable records and one-time consumption.
-- No production or merge operations exist. No arbitrary shell execution, GitHub writes, Linear writes or model calls exist.
+- No production or merge operations exist. No arbitrary shell execution, GitHub writes, Linear writes or real model API calls exist. The only selectable LLM adapter is a deterministic local mock.
 - Compose persists workflow state and review interrupts. Python-only memory previews are not durable. There is no authenticated approval/resume API.
 - Compose isolates the database on an internal network and retains API container restrictions; it is not a full hardened sandbox. Local Docker administrators can inspect container environment credentials.
 - Pin dependencies and scan images before any real deployment.
@@ -121,5 +135,6 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 - [Platform architecture](docs/platform/architecture.md): confirmed implementation and clearly separated future plans.
 - [Security guardrails](docs/platform/security.md): minimum development boundaries and current limitations.
 - [Workflow persistence](docs/platform/workflow-persistence.md): checkpoints, interrupts, internal approval gates, migrations and restart verification.
+- [LLM gateway and Requirements Analyst](docs/platform/llm-gateway.md): mock provider, typed contracts, structured output, execution/budget limits and tests.
 
 This repository builds a reusable platform, not the Redeeming Light website. Project-specific documents stay outside default coding-agent context and are loaded only for relevant tasks. Previously named platform/security/project reference documents are not present here; their contents are not assumed by this documentation.
