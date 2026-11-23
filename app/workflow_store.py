@@ -12,7 +12,12 @@ from langgraph.checkpoint.serde.jsonplus import JsonPlusSerializer
 from langgraph.types import Command
 
 from .database import connection_parameters
-from .models import Task
+from .models import Action, AnalysisTask, Task
+from .analysis_workflow import ANALYSIS_GRAPH_VERSION, build_analysis_graph
+from .llm import GatewayLimits, MemoryBudget, configured_client
+from .llm_budget import PostgresBudget
+from .policy import authorize
+from .requirements import analyze
 from .workflow import GRAPH_VERSION, build_graph
 
 
@@ -45,8 +50,11 @@ def initial_state(task: Task, thread_id: str) -> dict:
 
 def public_state(state: dict) -> dict:
     # Keep LangGraph interrupt objects and internal approval metadata out of HTTP.
-    return {key: state[key] for key in
-            ("project_id", "run_id", "objective", "draft", "status", "thread_id")}
+    result = {key: state[key] for key in
+              ("project_id", "run_id", "objective", "draft", "status", "thread_id")}
+    if state["graph_version"] == ANALYSIS_GRAPH_VERSION:
+        result.update({key: state[key] for key in ("requirements", "llm_usage", "analysis_error")})
+    return result
 
 
 def preview(task: Task) -> dict:
@@ -55,6 +63,32 @@ def preview(task: Task) -> dict:
     graph = build_graph(InMemorySaver())
     config = {"configurable": {"thread_id": thread_id}}
     graph.invoke(initial_state(task, thread_id), config)
+    return public_state(graph.get_state(config).values)
+
+
+def analysis_limits(task: AnalysisTask) -> GatewayLimits:
+    # Reuse the demo local-draft capability; this does not grant real tool authority.
+    authorize(Action(project_id=task.project_id, run_id=task.run_id,
+                     capability="draft:local", resource="requirements:local"), task.level,
+              project_id=task.project_id, run_id=task.run_id)
+    configured_client()  # Reject unsupported configuration before registering a run.
+    return GatewayLimits.from_environment()
+
+
+def initial_analysis_state(task: AnalysisTask, thread_id: str, limits: GatewayLimits) -> dict:
+    return dict(initial_state(task, thread_id), graph_version=ANALYSIS_GRAPH_VERSION,
+                gateway_limits=limits.model_dump(), requirements=None, analysis_error="",
+                llm_usage={"attempts": 0, "reserved_units": 0})
+
+
+def preview_analysis(task: AnalysisTask) -> dict:
+    limits = analysis_limits(task)
+    ledger = MemoryBudget()
+    client = configured_client()
+    graph = build_analysis_graph(InMemorySaver(), lambda state: analyze(state, client, ledger))
+    thread_id = str(uuid4())
+    config = {"configurable": {"thread_id": thread_id}}
+    graph.invoke(initial_analysis_state(task, thread_id, limits), config)
     return public_state(graph.get_state(config).values)
 
 
@@ -76,7 +110,19 @@ class PersistentWorkflows:
     def __init__(self, connection):
         self.connection = connection
         serializer = JsonPlusSerializer(allowed_msgpack_modules=[], allowed_json_modules=[])
-        self.graph = build_graph(PostgresSaver(connection, serde=serializer))
+        saver = PostgresSaver(connection, serde=serializer)
+        self.graph = build_graph(saver)
+        self.analysis_graph = build_analysis_graph(saver, self._analyze)
+
+    def _analyze(self, state: dict) -> dict:
+        return analyze(state, configured_client(), PostgresBudget(self.connection, state["thread_id"]))
+
+    def _graph_for(self, version: str):
+        if version == GRAPH_VERSION:
+            return self.graph
+        if version == ANALYSIS_GRAPH_VERSION:
+            return self.analysis_graph
+        raise WorkflowStateError
 
     @contextmanager
     def _locked(self, thread_id: str):
@@ -102,12 +148,12 @@ class PersistentWorkflows:
         ).fetchone()
         if row is None:
             raise WorkflowNotFound
-        if row["graph_version"] != GRAPH_VERSION:
-            raise WorkflowStateError
+        self._graph_for(row["graph_version"])
         return row
 
     def _snapshot(self, identity: dict):
-        snapshot = self.graph.get_state({"configurable": {"thread_id": identity["thread_id"]}})
+        graph = self._graph_for(identity["graph_version"])
+        snapshot = graph.get_state({"configurable": {"thread_id": identity["thread_id"]}})
         state = snapshot.values
         if not state or any(state.get(key) != identity[key] for key in
                             ("project_id", "run_id", "thread_id", "graph_version")):
@@ -117,19 +163,27 @@ class PersistentWorkflows:
         return snapshot
 
     def create(self, task: Task) -> dict:
+        return self._create(task, GRAPH_VERSION)
+
+    def create_analysis(self, task: AnalysisTask) -> dict:
+        limits = analysis_limits(task)
+        return self._create(task, ANALYSIS_GRAPH_VERSION, limits)
+
+    def _create(self, task: Task, version: str, limits: GatewayLimits | None = None) -> dict:
         thread_id = str(uuid4())
         try:
             self.connection.execute(
                 "INSERT INTO workflow.runs "
                 "(thread_id, project_id, run_id, objective_digest, graph_version) "
                 "VALUES (%s,%s,%s,%s,%s)",
-                (thread_id, task.project_id, task.run_id, digest(task.objective), GRAPH_VERSION),
+                (thread_id, task.project_id, task.run_id, digest(task.objective), version),
             )
         except psycopg.errors.UniqueViolation:
             raise WorkflowConflict from None
         with self._locked(thread_id):
             config = {"configurable": {"thread_id": thread_id}}
-            self.graph.invoke(initial_state(task, thread_id), config, durability="sync")
+            state = initial_analysis_state(task, thread_id, limits) if limits is not None else initial_state(task, thread_id)
+            self._graph_for(version).invoke(state, config, durability="sync")
             identity = self._identity(task.project_id, task.run_id, thread_id)
             return public_state(self._snapshot(identity).values)
 
@@ -175,6 +229,7 @@ class PersistentWorkflows:
             ).fetchone()
             if claimed is None:
                 raise ResumeDenied
-            self.graph.invoke(Command(resume={"approval_id": approval_id}),
-                              {"configurable": {"thread_id": thread_id}}, durability="sync")
+            graph = self._graph_for(identity["graph_version"])
+            graph.invoke(Command(resume={"approval_id": approval_id}),
+                         {"configurable": {"thread_id": thread_id}}, durability="sync")
             return public_state(self._snapshot(identity).values)
