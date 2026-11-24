@@ -1,0 +1,13 @@
+# TEST ONLY overlay. Use a NEW Compose project and synthetic secrets.
+# scripts/verify_red6.py creates those automatically. Never use with real keys.
+services:
+  intake:
+    build:
+      target: test
+    command: ["python", "/srv/tests/intake_fixture.py"]
+    environment:
+      LINEAR_READ_API_KEY: synthetic-linear-key
+      PILOT_LINEAR_WORKSPACE_ID: 00000000-0000-0000-0000-000000000001
+      PILOT_LINEAR_TEAM_ID: 00000000-0000-0000-0000-000000000002
+      PILOT_LINEAR_ISSUE_UUID: 00000000-0000-0000-0000-000000000003
+      PILOT_LINEAR_PROJECT_ID: none

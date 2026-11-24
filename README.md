@@ -1,68 +1,34 @@
 # Agentic SDLC Platform — Local Starter v0.1
 
-**Scope:** Local FastAPI + LangGraph draft demonstration with PostgreSQL/pgvector, durable checkpoints, internal human-review interrupt/resume, and a mock-only Requirements Analyst behind a provider-neutral LLM gateway (Task 004). **Not a working autonomous coding platform.** No real LLM API calls, OpenHands, RAG, authenticated approval issuer, external integrations or production-ready isolation are implemented. Approval/resume is not exposed over HTTP.
+**Scope:** Local A0/A1 platform using Windmill Community, FastAPI, LangGraph OSS and PostgreSQL/pgvector. Task 004 provides a bounded, mock-only Requirements Analyst through localhost `/analysis`. RED-6 adds authenticated, project-bound intake and a manual read-only Linear connector to the existing durable draft/review workflow. Codex CLI execution, RAG, GitHub integration and production isolation remain planned. No HTTP approval/resume endpoint exists. See [validation evidence](docs/development/red6-validation.md) for tested versus simulated behavior.
 
-## Quick start in WSL2 Ubuntu
+**Start here: [Docker/WSL2 quickstart and manual RED-5 setup](docs/quickstart.md).** It covers first-time setup, Linear credentials, all six Windmill variables, script import, safe preflight, expected output and daily startup.
 
-```bash
-unzip agentic-sdlc-starter.zip
-cd agentic-sdlc-starter
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -e '.[dev]'
-pytest -q
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
+## Local runtime
 
-In another terminal:
+Use the quickstart for Docker onboarding. Optional Python-only development and its request-local memory preview are documented in [development workflow](docs/development/workflow.md). The preview is not the persistent Windmill pilot. Compose requires PostgreSQL and never silently falls back to memory.
 
-```bash
-curl -s http://127.0.0.1:8000/health
-curl -s -X POST http://127.0.0.1:8000/draft -H 'Content-Type: application/json' -d '{"project_id":"demo","run_id":"r1","objective":"Draft an API design"}'
-```
-
-The Python-only demo defaults to request-local memory previews: `/health` and `/draft` still work; `/db-health` returns HTTP 503 until configured. Python does not automatically load `.env`. Compose requires PostgreSQL persistence; it never silently falls back to memory.
-
-## Docker database setup
-
-Requires Docker Engine and Docker Compose v2 or later. Stop a host Uvicorn process first if it already occupies port 8000.
-
-1. Copy `.env.example` to `.env` without overwriting an existing configuration, and restrict its permissions:
-
-   ```bash
-   cp -n .env.example .env
-   chmod 600 .env
-   ```
-
-2. In your local editor, set `POSTGRES_PASSWORD` and `DB_PASSWORD` to two different randomly generated, local-only passwords. Blank values intentionally prevent startup. Keep `.env` private and untracked; do not paste it or resolved Compose output into tickets or logs. `POSTGRES_DB` defaults to `agentic_sdlc`.
-3. Validate and start:
-
-   ```bash
-   docker compose config --quiet
-   docker compose up --build -d --wait
-   docker compose ps
-   curl -i http://127.0.0.1:8000/db-health
-   ```
-
-Expect HTTP 200 with `{"status":"ok"}` after initialization. Failures return HTTP 503 with `{"status":"unavailable"}`, without credentials or driver details. `/health` remains a process health check; `/db-health` checks a database query and that the vector extension is enabled.
-
-The database uses `pgvector/pgvector:0.8.7-pg17-bookworm` pinned to an immutable multi-platform digest in [compose.yaml](compose.yaml). PostgreSQL 17 is a [supported major version](https://www.postgresql.org/support/versioning/); see the [upstream pgvector image documentation](https://github.com/pgvector/pgvector#docker). Upgrading requires deliberate tag/digest review.
-
-The API publishes only `127.0.0.1:8000` by default (`API_PORT` changes only the port). Its container listens on `0.0.0.0` to receive traffic through that loopback-only mapping. PostgreSQL has no host port and joins only the internal `database` network; the API joins that network and the default bridge. This replaces the previous host-network setup. Standalone Dockerfile execution still defaults to loopback binding.
+The compatibility API publishes only on host loopback, and Windmill reaches a separate private intake listener with legacy routes disabled. PostgreSQL has no host port. The existing PostgreSQL/pgvector volume, migrations and graph/review gates are retained. Advanced network, configuration and resource details remain in [deployment](docs/development/deployment.md).
 
 ## Initialization and configuration
 
-On an **empty** named volume, the Postgres entrypoint creates the database and runs [001-init.sh](docker/postgres/001-init.sh). It enables `vector` and creates the non-superuser `sdlc_app` login without schema-create privileges. A separate one-shot `migrate` service uses the bootstrap-admin password to initialize the private workflow schema and checkpoint tables. The API receives only runtime credentials and starts after successful migration. Existing Phase 1A volumes are upgraded additively; do not reset them.
+On an **empty** named volume, the Postgres entrypoint creates the database and runs [001-init.sh](docker/postgres/001-init.sh). It enables `vector` and creates the non-superuser `sdlc_app` login without schema-create privileges. A separate one-shot `migrate` service uses the bootstrap-admin password to initialize the private workflow schema and checkpoint tables. The API receives only runtime credentials and starts after successful migration. Existing Phase 1A volumes are upgraded additively; do not reset them. The `windmill-init` service adds a separate `windmill` database and restricted login on the same PostgreSQL cluster, including existing volumes. Windmill owns its queue and operational metadata; it cannot connect to the platform database. Both databases remain in `postgres_data`.
 
 Compose maps `DB_PASSWORD` to the initialization script and the API. The API reads `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` and optional `DB_CONNECT_TIMEOUT` (default 3 seconds, allowed 2–10). `/db-health` opens one read-only connection per probe. Workflows use separate read/write connections and 3-second statement/lock timeouts. These bound individual stages, not a strict whole-request deadline including DNS. There is no pool or ORM yet.
 
 Compose sets `WORKFLOW_PERSISTENCE=postgres`. `/draft` retains its response fields and adds a server-generated `thread_id`. A repeated project/run pair returns 409 without revealing the existing state. The draft now pauses at a real review interrupt. No HTTP state lookup, approval or resume endpoint exists. See [workflow persistence](docs/platform/workflow-persistence.md) for identity mapping, internal resume, permissions and restart verification.
 
-Initialization runs only once. Changing `.env` does **not** rotate passwords, rename databases or rerun scripts on an existing volume. Coordinate credential changes with an authorized database administrator; never delete the volume to fix a login failure. A host Python process cannot use Compose DNS name `db` or reach this database through a published port. Use the container workflow for database tests, or explicitly configure a separately managed development database.
+The original entrypoint initialization runs only once; the additive `migrate` and `windmill-init` services are repeatable. Changing `.env` does **not** rotate passwords, rename databases or rerun scripts on an existing volume. Coordinate credential changes with an authorized database administrator; never delete the volume to fix a login failure. A host Python process cannot use Compose DNS name `db` or reach this database through a published port. Use the container workflow for database tests, or explicitly configure a separately managed development database.
+
+## RED-6 intake and RED-5 pilot
+
+Windmill handles manual invocation and read-only Linear lookup. FastAPI authenticates a scoped service token, validates the contract, independently verifies Linear identity, and deduplicates the event in PostgreSQL. LangGraph executes the existing `draft-review-v1` graph and saves a real human-review interrupt. Duplicate intake reads that state; it never resumes or approves it. The objective and planning response are deterministic, not model-generated work.
+
+Configure the trusted workspace/team/issue/project binding and import [the manual script](windmill/red5_linear_dispatch.py) using the [quickstart](docs/quickstart.md). No polling, public webhook or production credential is enabled. The pilot does not complete the website issue.
 
 ## Mock Requirements Analyst
 
-Keep `LLM_PROVIDER=mock`; real provider names fail closed and no provider credentials are needed. Docker setup above also adds an append-only budget ledger without resetting existing data.
+Keep `LLM_PROVIDER=mock`; real provider names fail closed and no provider credentials are needed. The quickstart Docker setup also adds an append-only budget ledger without resetting existing data.
 
 ```bash
 curl -s http://127.0.0.1:8000/analysis \
@@ -75,6 +41,14 @@ The response contains structured requirements, usage reservations, a server-gene
 Server settings bound input/output size, provider timeout, total attempts and per-run byte-based budget; callers cannot override them. See [LLM gateway](docs/platform/llm-gateway.md) for configuration ranges, failure statuses, persistence and limitations. Existing `/draft` remains unchanged.
 
 ## Tests and persistence verification
+
+Repeatable Docker acceptance proof with generated synthetic secrets and a new isolated Compose project:
+
+```bash
+python3 scripts/verify_red6.py
+```
+
+This uses real Windmill jobs, private HTTP, PostgreSQL and LangGraph, but explicitly **simulates Linear responses**. It compares the pending checkpoint before and after database/API/Windmill container recreation, retries the same job, then removes test containers/networks while retaining volumes. It does not prove live Linear integration. Never apply [the simulation overlay](compose.integration.yaml) to an existing or credentialed stack.
 
 Run unit/regression tests in the activated local virtual environment:
 
@@ -103,7 +77,7 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 
 ## Troubleshooting
 
-- **Compose reports a missing password:** populate both blank password fields in your local `.env`. Use `docker compose config --quiet` to validate without printing resolved secrets.
+- **Compose reports a missing password:** populate all three password fields and the separate intake token in your local `.env`. Use `docker compose config --quiet` to validate without printing resolved secrets.
 - **Database stays unhealthy:** inspect `docker compose ps` and local `docker compose logs db` for startup, disk or initialization errors. Review/redact logs before sharing. `pg_isready` tests server readiness; `/db-health` additionally checks application authentication and the extension.
 - **HTTP 503:** check configuration, existing-volume credentials and initialization. From the database container, inspect `SELECT extversion FROM pg_extension WHERE extname = 'vector';` as the admin. For an existing database missing the extension or role, review and authorize an additive migration; initialization scripts are not a migration system.
 - **Port 8000 occupied:** stop the other local API process or set `API_PORT=18000` in `.env` and use that port in requests. The host binding remains loopback-only.
@@ -111,26 +85,30 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 
 ## Security limitations
 
-- API is unauthenticated and MUST stay on localhost. Never publish it or attach real tokens.
+- `/draft` remains unauthenticated and MUST stay on localhost. The separate integration listener authenticates one restricted service principal; its token is not a human identity or approval. Only the read-only pilot connector receives explicitly configured development Linear credentials.
 - `authorize()` is a testable policy function, **not** wired to external tools. A2 approval objects are caller-supplied; real approvals require independently authenticated human identity, immutable records and one-time consumption.
-- No production or merge operations exist. No arbitrary shell execution, GitHub writes, Linear writes or real model API calls exist. The only selectable LLM adapter is a deterministic local mock.
+- Platform routes perform no shell execution, GitHub writes, Linear mutations, Codex invocation or real model API calls. The Requirements Analyst supports only a deterministic mock adapter. Windmill can execute operator-authored scripts: run only the reviewed connector, never issue-derived code. This worker is not an AI sandbox.
 - Compose persists workflow state and review interrupts. Python-only memory previews are not durable. There is no authenticated approval/resume API.
 - Compose isolates the database on an internal network and retains API container restrictions; it is not a full hardened sandbox. Local Docker administrators can inspect container environment credentials.
-- Pin dependencies and scan images before any real deployment.
+- Runtime image digests and resolved Python versions are pinned; artifact hashes, vulnerability scanning, credential rotation, rate limiting and production hardening remain separate gates.
 
 ## Next implementation gates
 
-1. Add authenticated API, trusted project membership, append-only audit and deny-by-default PEP wired to *every* future tool adapter. The current run registry does not establish authenticated tenancy.
+1. Extend the narrow service-token pilot to independently authenticated principals, broader project membership, durable audit and enforcement on every future tool adapter. Current SQL credentials are not tenant-isolated.
 2. Add an independently authenticated approval issuer and scoped retrieval/resume API. Internal resume already checks one-use server records bound to exact checkpoints/state digests.
 3. Extend checkpoint recovery, retention and graph-version migration beyond the current deterministic draft/review workflow.
-4. Add isolated OpenHands execution without host Docker socket, credentials or unrestricted network.
+4. Implement and security-test an isolated Codex CLI runner without host Docker socket, production credentials or unrestricted network. No runner is currently registered or invoked. This supersedes earlier OpenHands guidance.
 5. Add project-scoped LangChain RAG and SEC-01..SEC-12 tests.
-6. Only then connect Linear/GitHub read-only; separately authorize narrow writes.
+6. Validate the configured live read-only Linear handoff. GitHub integration and all external writes need separate authorization.
 
 ## Documentation
 
+- [Quickstart](docs/quickstart.md): first-time onboarding and daily startup.
 - [AGENTS.md](AGENTS.md): shared coding-agent instructions and selective context loading.
 - [CLAUDE.md](CLAUDE.md): thin Claude Code adapter to the shared instructions.
+- [Local deployment](docs/development/deployment.md): Compose, configuration, resources and WSL2.
+- [RED-6 validation and documentation summary](docs/development/red6-validation.md): actual checks, gaps and future source revisions.
+- [Windmill decision record](docs/decisions/0001-windmill.md): selection over Activepieces/n8n.
 - [Development workflow](docs/development/workflow.md): local development, validation and agent handoffs.
 - [Platform architecture](docs/platform/architecture.md): confirmed implementation and clearly separated future plans.
 - [Security guardrails](docs/platform/security.md): minimum development boundaries and current limitations.

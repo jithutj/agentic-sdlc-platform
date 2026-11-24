@@ -187,6 +187,48 @@ class PersistentWorkflows:
             identity = self._identity(task.project_id, task.run_id, thread_id)
             return public_state(self._snapshot(identity).values)
 
+    def intake(self, payload: dict, idempotency_key: str, scope: dict) -> dict:
+        """One durable pilot event; retries read state and never resume the graph."""
+        from windmill.red5_linear_dispatch import OBJECTIVE, EXECUTION_PLAN, QA_PLAN
+        payload_digest = digest({"task": payload, "scope": scope, "planning_artifact": OBJECTIVE})
+        project_id, issue_id = payload["project_id"], payload["issue_id"]
+        # Lock the event, not a caller-selected key: fresh keys cannot create
+        # duplicate pilot runs. Session lock survives the registration commit.
+        with self._locked("intake:" + project_id + ":" + issue_id):
+            prior = self.connection.execute(
+                "SELECT * FROM workflow.intake_events WHERE project_id=%s "
+                "AND (issue_id=%s OR idempotency_key=%s)",
+                (project_id, issue_id, idempotency_key),
+            ).fetchone()
+            if prior:
+                if prior["payload_digest"] != payload_digest or prior["issue_id"] != issue_id:
+                    raise WorkflowConflict
+                state = self.read(project_id, prior["run_id"], prior["thread_id"])
+            else:
+                task = Task(project_id=project_id, run_id=str(uuid4()), objective=OBJECTIVE)
+                thread_id = str(uuid4())
+                with self.connection.transaction():
+                    self.connection.execute(
+                        "INSERT INTO workflow.runs "
+                        "(thread_id,project_id,run_id,objective_digest,graph_version) "
+                        "VALUES (%s,%s,%s,%s,%s)",
+                        (thread_id, project_id, task.run_id, digest(task.objective), GRAPH_VERSION),
+                    )
+                    self.connection.execute(
+                        "INSERT INTO workflow.intake_events "
+                        "(project_id,issue_id,idempotency_key,payload_digest,thread_id,run_id) "
+                        "VALUES (%s,%s,%s,%s,%s,%s)",
+                        (project_id, issue_id, idempotency_key, payload_digest, thread_id, task.run_id),
+                    )
+                with self._locked(thread_id):
+                    self.graph.invoke(initial_state(task, thread_id),
+                                      {"configurable": {"thread_id": thread_id}}, durability="sync")
+                    state = public_state(self._snapshot(self._identity(
+                        project_id, task.run_id, thread_id)).values)
+            return {k: state[k] for k in ("project_id", "run_id", "thread_id", "status")} | {
+                "approved": False, "codex_executed": False, "git_write_performed": False,
+                "execution_plan": EXECUTION_PLAN, "qa_plan": QA_PLAN}
+
     def read(self, project_id: str, run_id: str, thread_id: str) -> dict:
         """Internal only: IDs plus the server-generated opaque thread handle."""
         identity = self._identity(project_id, run_id, thread_id)

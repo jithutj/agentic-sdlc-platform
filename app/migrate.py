@@ -57,6 +57,21 @@ def migrate():
                 )
             """)
             connection.execute("GRANT USAGE ON SCHEMA workflow TO sdlc_app")
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS workflow.intake_events (
+                    project_id text NOT NULL,
+                    issue_id text NOT NULL,
+                    idempotency_key text NOT NULL,
+                    payload_digest text NOT NULL,
+                    thread_id text NOT NULL UNIQUE REFERENCES workflow.runs(thread_id),
+                    run_id text NOT NULL,
+                    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+                    PRIMARY KEY (project_id, issue_id),
+                    UNIQUE (project_id, idempotency_key),
+                    FOREIGN KEY (project_id, run_id) REFERENCES workflow.runs(project_id, run_id)
+                )
+            """)
+            connection.execute("GRANT SELECT, INSERT ON workflow.intake_events TO sdlc_app")
             connection.execute("GRANT SELECT, INSERT ON workflow.runs, workflow.approval_uses TO sdlc_app")
             connection.execute("GRANT SELECT ON workflow.approvals TO sdlc_app")
             connection.execute("GRANT SELECT, INSERT ON workflow.llm_attempts TO sdlc_app")

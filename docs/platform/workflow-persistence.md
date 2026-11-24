@@ -22,7 +22,7 @@ Task 004 adds the separate `requirements-review-v1` graph for `/analysis`, selec
 
 Every internal lookup/resume checks all three identifiers against the registry before loading a checkpoint. The loaded state's project, run, thread, graph version and objective digest must match that registry. Callers cannot select arbitrary checkpoint IDs or supply raw LangGraph config. Session advisory locks serialize operations per thread across processes; a unique project/run constraint prevents concurrent creates from overwriting each other.
 
-These checks prevent identity confusion; they are **not authenticated tenant isolation**. Project IDs are caller labels, and a thread handle is not proof of human identity. The API has no authentication, so it exposes no lookup, approval issuance or resume routes. In-process code and local database operators are trusted. Raw checkpoint access is not an authorization API. Real project membership, authenticated principals and scoped authorization must precede any external retrieval or resume surface.
+These checks prevent identity confusion; they are **not authenticated tenant isolation**. Project IDs are caller labels, and a thread handle is not proof of human identity. The compatibility API has no authentication. RED-6 authenticates only a narrow intake service; neither listener exposes lookup, approval issuance or resume routes. In-process code and local database operators are trusted. Raw checkpoint access is not an authorization API. Real project membership, authenticated principals and scoped authorization must precede any external retrieval or resume surface.
 
 ## Migration and permissions
 
@@ -30,7 +30,7 @@ The existing first-run Postgres script still creates `vector` and `sdlc_app`. Th
 
 | Runtime object | `sdlc_app` privileges |
 | --- | --- |
-| `runs`, `approval_uses` | SELECT, INSERT |
+| `runs`, `approval_uses`, `intake_events` | SELECT, INSERT |
 | `llm_attempts` | SELECT, INSERT; append-only analysis budget reservations |
 | `approvals` | SELECT only |
 | `checkpoints`, `checkpoint_blobs`, `checkpoint_writes` | SELECT, INSERT, UPDATE |
@@ -93,4 +93,18 @@ Repeat the lookup after recreation and compare both state and pending checkpoint
 
 Rollback means stopping the new API and running the previous Phase 1A application against the existing database, leaving the additive `workflow` schema and volume intact. The previous API does not read these checkpoints; persisted reviews remain unavailable until the compatible version returns. Do not drop schema, tables or volumes. Future dependency/graph/schema changes need a compatibility migration before existing threads can resume.
 
-Known limits: no authenticated API, approval issuer, tenant security, durable audit service, retry/recovery UI or checkpoint retention policy. A failure after registry insertion may leave a reserved run with incomplete state; the API returns 503 initially and 409 on later creates, rather than overwriting it. Trusted operators must diagnose such runs. Analysis gateway failures instead persist a safe terminal failure state. There are no real LLM API calls, RAG, OpenHands or external integrations.
+Known limits: no general user authentication, human approval issuer, SQL tenant security, durable platform audit service, retry/recovery UI or checkpoint retention policy. A failure after registry insertion may leave a reserved run with incomplete state; `/draft` returns 503 initially and 409 on later creates, rather than overwriting it. Trusted operators must diagnose such runs. Analysis gateway failures persist a safe terminal failure state. There are no real LLM API calls, RAG or Codex execution. RED-6 adds only read-only Linear lookup and manually invoked Windmill intake.
+
+## RED-6 durable intake
+
+The additive migration creates `workflow.intake_events`. It records a unique `(project_id, issue_id)` event, first idempotency key, normalized task/configuration/server-plan digest, immutable run/thread binding and creation time. The runtime role can SELECT/INSERT but cannot UPDATE/DELETE this table. The original graph/version and approval tables are unchanged.
+
+Intake serializes by project/issue before checking the registry. It atomically inserts the run and event records, then invokes the existing graph with synchronous checkpoint writes. The fixed objective includes the complete deterministic plan and QA text, so the review checkpoint/state digest covers that artifact. A repeat with the same task and trusted identity returns the saved run/thread and status even with a fresh transport key. Reusing a key or event with conflicting task/identity returns 409. The first transport key remains recorded; alternate retry keys are not separately logged. This is one manual planning event per pilot issue, not a general event-versioning system.
+
+A successful retry requires fresh token authorization and a fresh validated read-only Linear lookup. It cannot recover data after authorization/configuration changes or an upstream outage by bypassing validation. Read/retry never calls `Command(resume=...)`. Existing `/draft` still rejects duplicate project/run pairs with 409 and never returns state on duplicate creation.
+
+There is deliberately no claim of an atomic transaction spanning registry insertion and all LangGraph writes. A crash before a complete checkpoint can leave an immutable reserved event; the first request and later incomplete-state retries fail closed with a redacted 503. Operators must inspect such events; no automatic reset/replay/recovery tool is included. Completed interrupted runs survive normal container restarts and retry without state changes.
+
+Run `python3 scripts/verify_red6.py` for repeatable Docker restart evidence. It uses a new project and synthetic secrets, real Windmill jobs and private HTTP, and **simulated Linear responses**. It records state and pending checkpoint, recreates DB/API/intake/Windmill containers with retained volumes, compares both snapshots, and runs another authenticated duplicate. It also runs all database and approval regressions. This proves the tested local interruption boundary, not arbitrary crash recovery or a live credentialed Linear integration.
+
+Rollback keeps the additive table, Windmill database and all named volumes intact. Stop the new services and run the previous compatible API; existing `draft-review-v1` checkpoints remain compatible. The previous API ignores intake metadata. Do not drop roles/databases/schema or rotate credentials as an implicit rollback. See [deployment](../development/deployment.md) for privileged migration ownership and the separate Windmill database.

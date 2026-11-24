@@ -6,7 +6,7 @@ services:
     command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
     ports:
       - "127.0.0.1:${API_PORT:-8000}:8000"
-    networks: [default, database]
+    networks: [local_api, database]
     environment: &database_environment
       DB_HOST: db
       DB_PORT: "5432"
@@ -22,6 +22,12 @@ services:
       LLM_TIMEOUT_SECONDS: ${LLM_TIMEOUT_SECONDS:-1}
       LLM_RUN_TIMEOUT_SECONDS: ${LLM_RUN_TIMEOUT_SECONDS:-3}
       LLM_RUN_BUDGET_UNITS: ${LLM_RUN_BUDGET_UNITS:-60000}
+    healthcheck: &api_health
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/db-health', timeout=4)"]
+      interval: 10s
+      timeout: 5s
+      retries: 12
+      start_period: 15s
     depends_on:
       db:
         condition: service_healthy
@@ -44,7 +50,7 @@ services:
       POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
       APP_DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD in .env}
       POSTGRES_INITDB_ARGS: --auth-host=scram-sha-256
-    networks: [database]
+    networks: [database, windmill_database]
     volumes:
       - postgres_data:/var/lib/postgresql/data
       - ./docker/postgres/001-init.sh:/docker-entrypoint-initdb.d/001-init.sh:ro
@@ -88,11 +94,14 @@ services:
       RUN_WORKFLOW_INTEGRATION: "1"
       # Test-only approval fixtures use a separate admin connection, never the API.
       CHECKPOINT_TEST_ADMIN_PASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD in .env}
-    networks: [database]
+      WINDMILL_TEST_DB_PASSWORD: ${WINDMILL_DB_PASSWORD:?Set WINDMILL_DB_PASSWORD}
+    networks: [database, control]
     depends_on:
       db:
         condition: service_healthy
       migrate:
+        condition: service_completed_successfully
+      windmill-init:
         condition: service_completed_successfully
     read_only: true
     tmpfs:
@@ -102,9 +111,119 @@ services:
       - no-new-privileges:true
     command: ["pytest", "-q", "-p", "no:cacheprovider"]
 
+  # Same FastAPI application/image; only authenticated intake and probes enabled.
+  # No host port. The localhost compatibility listener shares no worker network.
+  intake:
+    build:
+      context: .
+      target: runtime
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+    environment:
+      <<: *database_environment
+      LOCAL_DEMO_ROUTES: "false"
+      PILOT_INTAKE_TOKEN: ${PILOT_INTAKE_TOKEN:?Set PILOT_INTAKE_TOKEN}
+      LINEAR_READ_API_KEY: ${LINEAR_READ_API_KEY:-}
+      PILOT_LINEAR_WORKSPACE_ID: ${PILOT_LINEAR_WORKSPACE_ID:-}
+      PILOT_LINEAR_TEAM_ID: ${PILOT_LINEAR_TEAM_ID:-}
+      PILOT_LINEAR_PROJECT_ID: ${PILOT_LINEAR_PROJECT_ID:-}
+      PILOT_LINEAR_ISSUE_UUID: ${PILOT_LINEAR_ISSUE_UUID:-}
+    networks: [database, control, egress]
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+    healthcheck: *api_health
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+    pids_limit: 128
+    mem_limit: 512m
+
+  windmill-init:
+    image: pgvector/pgvector:0.8.7-pg17-bookworm@sha256:b513c48566e4777cd3370451400000c78eda6a08131d68f4c31d4a76f27bd8fd
+    environment:
+      PGHOST: db
+      PGUSER: postgres
+      PGDATABASE: ${POSTGRES_DB:-agentic_sdlc}
+      PGPASSWORD: ${POSTGRES_PASSWORD:?Set POSTGRES_PASSWORD}
+      APP_DB_PASSWORD: ${DB_PASSWORD:?Set DB_PASSWORD}
+      WINDMILL_DB_PASSWORD: ${WINDMILL_DB_PASSWORD:?Set WINDMILL_DB_PASSWORD}
+    networks: [database]
+    volumes:
+      - ./docker/postgres/windmill-init.sh:/setup/windmill-init.sh:ro
+    entrypoint: ["sh", "/setup/windmill-init.sh"]
+    depends_on:
+      db:
+        condition: service_healthy
+    read_only: true
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
+
+  windmill-server:
+    image: ghcr.io/windmill-labs/windmill:1.875.0@sha256:1b224f32dcb6e4fdbd74ed935ad42ebe4c0ce8c42ff64f63bd59f1907bcb9da6
+    environment:
+      DATABASE_URL: postgres://windmill_login:${WINDMILL_DB_PASSWORD:?Set WINDMILL_DB_PASSWORD}@db:5432/windmill?sslmode=disable
+      MODE: server
+      BASE_URL: http://localhost:${WINDMILL_PORT:-8001}
+    ports:
+      - "127.0.0.1:${WINDMILL_PORT:-8001}:8000"
+    networks: [windmill_database, windmill_ui]
+    depends_on:
+      windmill-init:
+        condition: service_completed_successfully
+    volumes:
+      - windmill_logs:/tmp/windmill/logs
+    healthcheck:
+      test: ["CMD-SHELL", "curl --fail --silent http://127.0.0.1:8000/api/health/status >/dev/null"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    security_opt: [no-new-privileges:true]
+    mem_limit: 1g
+
+  windmill-worker:
+    image: ghcr.io/windmill-labs/windmill:1.875.0@sha256:1b224f32dcb6e4fdbd74ed935ad42ebe4c0ce8c42ff64f63bd59f1907bcb9da6
+    environment:
+      DATABASE_URL: postgres://windmill_login:${WINDMILL_DB_PASSWORD:?Set WINDMILL_DB_PASSWORD}@db:5432/windmill?sslmode=disable
+      MODE: worker
+      WORKER_GROUP: default
+      # Trusted connector scripts only. No privileged PID namespace or AI runner.
+      DISABLE_NSJAIL: "true"
+      ENABLE_UNSHARE_PID: "false"
+      FAVOR_UNSHARE_PID: "false"
+    networks: [windmill_database, control, egress]
+    depends_on:
+      windmill-server:
+        condition: service_healthy
+      intake:
+        condition: service_healthy
+    volumes:
+      - windmill_cache:/tmp/windmill/cache
+      - windmill_logs:/tmp/windmill/logs
+    healthcheck:
+      # Worker-only mode has no fixed published readiness endpoint. End-to-end
+      # smoke additionally checks the database heartbeat and executes a job.
+      test: ["CMD-SHELL", "kill -0 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 18
+      start_period: 30s
+    security_opt: [no-new-privileges:true]
+    mem_limit: 2g
+    cpus: 1.0
+
 networks:
   database:
     internal: true
+  windmill_database:
+    internal: true
+  control:
+    internal: true
+  windmill_ui:
+  local_api:
+  egress:
 
 volumes:
   postgres_data:
+  windmill_cache:
+  windmill_logs:
