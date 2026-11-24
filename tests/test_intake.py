@@ -103,7 +103,7 @@ def test_body_limit_and_redacted_errors(configured):
     assert "synthetic-secret" not in response.text
 
 
-@pytest.mark.parametrize("path", ["/draft", "/docs", "/openapi.json", "/approve", "/resume"])
+@pytest.mark.parametrize("path", ["/draft", "/analysis", "/analysis/", "/docs", "/openapi.json", "/approve", "/resume"])
 def test_private_listener_exposes_only_intake_and_health(configured, monkeypatch, path):
     monkeypatch.setenv("LOCAL_DEMO_ROUTES", "false")
     assert configured[0].post(path, json={}).status_code == 404

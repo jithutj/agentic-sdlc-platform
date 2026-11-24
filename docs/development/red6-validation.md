@@ -1,6 +1,6 @@
 # RED-6 validation and documentation change summary
 
-Date: 2026-11-23. Task branch: `feature/red-6-windmill-integration`, created directly from `main` at `c679d1d`. Unmerged `feature/004-llm-gateway` was left untouched. Implementation and validation were local; subsequent user authorization permits committing and pushing this task branch. No PR, remote issue update or production deployment was performed.
+Date: 2026-11-23. Task branch: `feature/red-6-windmill-integration`, created directly from `main` at `c679d1d`. At the original RED-6 checkpoint, unmerged `feature/004-llm-gateway` was left untouched. It subsequently entered `main` at `98256a4` and is now preserved by the conflict-resolution merge into this task branch. Implementation and validation were local; subsequent user authorization permits committing and pushing this task branch. No PR, remote issue update or production deployment was performed.
 
 ## Integration disposition
 
@@ -104,3 +104,14 @@ python3 scripts/verify_red6.py
 ```
 
 Live read-only development handoff requires the operator's scoped Linear credential and [pilot configuration](../projects/redeeming-light/pilot.md). Do not paste credentials into chat or source. Local simulation success alone does not close that gate.
+
+
+## Main conflict-resolution verification — 2026-11-24
+
+Merged `origin/main` at `98256a4` into the existing RED-6 branch after Task 004 reached main. Preserved its mock-only analyst, gateway limits, analysis graph version and append-only budget ledger alongside RED-6 intake, health checks, durable event registry and private-listener restrictions. This reconciles already implemented features; it does not implement the next approval issuer or Codex runner gate.
+
+Resolved conflicts in README, FastAPI middleware/validation, Compose and architecture/security/persistence documentation. Added regressions denying `/analysis` and `/analysis/` on the private listener and verifying mock-analysis/intake checkpoints coexist after reconnection. Upstream standalone analyst implementation and tests remain identical to main.
+
+Validation: the complete isolated Docker acceptance harness passed with **179 tests passed, none skipped**, in 7.34 seconds for the pytest phase. Real Windmill worker jobs, private HTTP, PostgreSQL checkpoints, repeat requests and exact state/pending-checkpoint equality across database/API/Windmill recreation passed. Linear responses were simulated. Run ID: `aec45eae-7bc5-4fda-a147-571392c3787f`; thread ID: `acc439b2-b9e1-400e-845a-edccf848676f`. Python compilation, conflict-marker checks and **120 local documentation links** passed.
+
+Docker's automatic subnet pool was exhausted, so the test used a temporary IPAM-only Compose overlay with six verified non-overlapping `/28` subnets under `10.253.240.0/24`. The wrapper added that overlay to the existing acceptance harness without changing repository network settings. The passing project was `red6-verify-dce6526a30`. Test containers/networks were removed; volumes and the private synthetic env file were retained. The existing live-development stack, credentials and volumes were not modified or deployed. No real Linear request, external write or Codex execution occurred in verification.

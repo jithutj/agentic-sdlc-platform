@@ -47,6 +47,15 @@ def migrate():
                     reserved_at timestamptz NOT NULL DEFAULT clock_timestamp()
                 )
             """)
+            connection.execute("""
+                CREATE TABLE IF NOT EXISTS workflow.llm_attempts (
+                    thread_id text NOT NULL REFERENCES workflow.runs(thread_id),
+                    attempt_no integer NOT NULL CHECK (attempt_no BETWEEN 1 AND 3),
+                    reserved_units integer NOT NULL CHECK (reserved_units > 0),
+                    created_at timestamptz NOT NULL DEFAULT clock_timestamp(),
+                    PRIMARY KEY (thread_id, attempt_no)
+                )
+            """)
             connection.execute("GRANT USAGE ON SCHEMA workflow TO sdlc_app")
             connection.execute("""
                 CREATE TABLE IF NOT EXISTS workflow.intake_events (
@@ -65,6 +74,7 @@ def migrate():
             connection.execute("GRANT SELECT, INSERT ON workflow.intake_events TO sdlc_app")
             connection.execute("GRANT SELECT, INSERT ON workflow.runs, workflow.approval_uses TO sdlc_app")
             connection.execute("GRANT SELECT ON workflow.approvals TO sdlc_app")
+            connection.execute("GRANT SELECT, INSERT ON workflow.llm_attempts TO sdlc_app")
             connection.execute("""
                 GRANT SELECT, INSERT, UPDATE ON workflow.checkpoints,
                     workflow.checkpoint_blobs, workflow.checkpoint_writes TO sdlc_app

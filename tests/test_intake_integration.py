@@ -13,6 +13,26 @@ pytestmark = [pytest.mark.integration, pytest.mark.skipif(
     os.environ.get("RUN_WORKFLOW_INTEGRATION") != "1", reason="Requires migrated local PostgreSQL")]
 
 
+def test_intake_and_mock_analysis_checkpoints_coexist_after_reconnect(monkeypatch):
+    from app.models import AnalysisTask
+    monkeypatch.setenv("LLM_PROVIDER", "mock")
+    payload = contract() | {"project_id": "test-" + str(uuid4())}
+    task = AnalysisTask(project_id=payload["project_id"], run_id=str(uuid4()),
+                        objective="Describe a synthetic local issue tracker")
+    with open_workflows() as workflows:
+        analysis = workflows.create_analysis(task)
+        intake = workflows.intake(payload, "synthetic-merged-main-001", {})
+        pending = [workflows.pending_review(payload["project_id"], state["run_id"], state["thread_id"])
+                   for state in (analysis, intake)]
+    with open_workflows() as workflows:
+        assert workflows.read(task.project_id, task.run_id, analysis["thread_id"]) == analysis
+        assert analysis["requirements"] is not None
+        assert workflows.intake(payload, "synthetic-merged-main-001", {}) == intake
+        assert [workflows.pending_review(payload["project_id"], state["run_id"], state["thread_id"])
+                for state in (analysis, intake)] == pending
+        assert all(state["status"] == "awaiting_human_review" for state in (analysis, intake))
+
+
 def test_retry_across_connections_and_conflict():
     payload = contract() | {"project_id": "test-" + str(uuid4())}
     with open_workflows() as workflows:

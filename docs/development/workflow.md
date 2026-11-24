@@ -30,7 +30,7 @@ The tests cover API health/draft responses, selected policy allow/deny cases and
 
 ## RED-6 validation and handoff
 
-Create feature branches from `main`; keep unrelated unmerged branches separate. RED-6 begins at `c679d1d` and does not import Task 004. Preserve the existing checkpoints, review interrupt and approval tests when changing intake.
+Create feature branches from `main`; keep unrelated unmerged branches separate. RED-6 began at `c679d1d`; it now incorporates Task 004 through `main` at `98256a4`. This conflict-resolution merge preserves the mock analyst alongside authenticated intake; it does not start the next approval or Codex execution gate. Preserve the existing checkpoints, review interrupt and approval tests when changing intake.
 
 Use `pytest -q` for unit/regression checks. Run `docker compose --profile test run --build --rm tests` after normal Compose startup for all PostgreSQL checks. These tests add synthetic records and use admin credentials only for approval fixtures. New integration tests require the Windmill database initializer as well as platform migration, including cross-database CONNECT denial tests.
 

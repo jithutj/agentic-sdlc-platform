@@ -1,6 +1,6 @@
 # Agentic SDLC Platform — Local Starter v0.1
 
-**Scope:** Local A0/A1 platform using Windmill Community, FastAPI, LangGraph OSS and PostgreSQL/pgvector. RED-6 adds authenticated, project-bound intake and a manual read-only Linear connector to the existing durable draft/review workflow. Codex CLI execution, RAG, GitHub integration and production isolation remain planned. No HTTP approval/resume endpoint exists. See [validation evidence](docs/development/red6-validation.md) for tested versus simulated behavior.
+**Scope:** Local A0/A1 platform using Windmill Community, FastAPI, LangGraph OSS and PostgreSQL/pgvector. Task 004 provides a bounded, mock-only Requirements Analyst through localhost `/analysis`. RED-6 adds authenticated, project-bound intake and a manual read-only Linear connector to the existing durable draft/review workflow. Codex CLI execution, RAG, GitHub integration and production isolation remain planned. No HTTP approval/resume endpoint exists. See [validation evidence](docs/development/red6-validation.md) for tested versus simulated behavior.
 
 **Start here: [Docker/WSL2 quickstart and manual RED-5 setup](docs/quickstart.md).** It covers first-time setup, Linear credentials, all six Windmill variables, script import, safe preflight, expected output and daily startup.
 
@@ -25,6 +25,20 @@ The original entrypoint initialization runs only once; the additive `migrate` an
 Windmill handles manual invocation and read-only Linear lookup. FastAPI authenticates a scoped service token, validates the contract, independently verifies Linear identity, and deduplicates the event in PostgreSQL. LangGraph executes the existing `draft-review-v1` graph and saves a real human-review interrupt. Duplicate intake reads that state; it never resumes or approves it. The objective and planning response are deterministic, not model-generated work.
 
 Configure the trusted workspace/team/issue/project binding and import [the manual script](windmill/red5_linear_dispatch.py) using the [quickstart](docs/quickstart.md). No polling, public webhook or production credential is enabled. The pilot does not complete the website issue.
+
+## Mock Requirements Analyst
+
+Keep `LLM_PROVIDER=mock`; real provider names fail closed and no provider credentials are needed. The quickstart Docker setup also adds an append-only budget ledger without resetting existing data.
+
+```bash
+curl -s http://127.0.0.1:8000/analysis \
+  -H 'Content-Type: application/json' \
+  -d '{"project_id":"demo","run_id":"analysis-001","objective":"Describe a local issue tracker"}'
+```
+
+The response contains structured requirements, usage reservations, a server-generated thread ID and `awaiting_human_review`. It pauses at a real review interrupt. Output is a deterministic template and remains an untrusted draft. Use a new project/run pair for each creation; `/draft` and `/analysis` share uniqueness. No public approval/resume endpoint exists.
+
+Server settings bound input/output size, provider timeout, total attempts and per-run byte-based budget; callers cannot override them. See [LLM gateway](docs/platform/llm-gateway.md) for configuration ranges, failure statuses, persistence and limitations. Existing `/draft` remains unchanged.
 
 ## Tests and persistence verification
 
@@ -73,7 +87,7 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 
 - `/draft` remains unauthenticated and MUST stay on localhost. The separate integration listener authenticates one restricted service principal; its token is not a human identity or approval. Only the read-only pilot connector receives explicitly configured development Linear credentials.
 - `authorize()` is a testable policy function, **not** wired to external tools. A2 approval objects are caller-supplied; real approvals require independently authenticated human identity, immutable records and one-time consumption.
-- Platform routes perform no shell execution, GitHub writes, Linear mutations, Codex invocation or model calls. Windmill can execute operator-authored scripts: run only the reviewed connector, never issue-derived code. This worker is not an AI sandbox.
+- Platform routes perform no shell execution, GitHub writes, Linear mutations, Codex invocation or real model API calls. The Requirements Analyst supports only a deterministic mock adapter. Windmill can execute operator-authored scripts: run only the reviewed connector, never issue-derived code. This worker is not an AI sandbox.
 - Compose persists workflow state and review interrupts. Python-only memory previews are not durable. There is no authenticated approval/resume API.
 - Compose isolates the database on an internal network and retains API container restrictions; it is not a full hardened sandbox. Local Docker administrators can inspect container environment credentials.
 - Runtime image digests and resolved Python versions are pinned; artifact hashes, vulnerability scanning, credential rotation, rate limiting and production hardening remain separate gates.
@@ -99,5 +113,6 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 - [Platform architecture](docs/platform/architecture.md): confirmed implementation and clearly separated future plans.
 - [Security guardrails](docs/platform/security.md): minimum development boundaries and current limitations.
 - [Workflow persistence](docs/platform/workflow-persistence.md): checkpoints, interrupts, internal approval gates, migrations and restart verification.
+- [LLM gateway and Requirements Analyst](docs/platform/llm-gateway.md): mock provider, typed contracts, structured output, execution/budget limits and tests.
 
 This repository builds a reusable platform, not the Redeeming Light website. Project-specific documents stay outside default coding-agent context and are loaded only for relevant tasks. Previously named platform/security/project reference documents are not present here; their contents are not assumed by this documentation.

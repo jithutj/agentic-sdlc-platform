@@ -20,8 +20,10 @@ def draft(state: RunState) -> dict:
 
 def review(state: RunState) -> dict:
     # No side effects before interrupt: LangGraph re-enters this node on resume.
-    decision = interrupt({"kind": "human_review", "thread_id": state["thread_id"],
-                          "draft": state["draft"]})
+    payload = {"kind": "human_review", "thread_id": state["thread_id"], "draft": state["draft"]}
+    if state.get("requirements") is not None:
+        payload.update(requirements=state["requirements"], untrusted=True)
+    decision = interrupt(payload)
     # Only the internal service may supply a validated server-side approval ID.
     if not isinstance(decision, dict) or set(decision) != {"approval_id"}:
         raise ValueError("Invalid review decision")
