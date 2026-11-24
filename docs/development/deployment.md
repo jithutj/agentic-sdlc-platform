@@ -8,41 +8,13 @@ Use Docker Engine with Compose v2 or later, Python 3 for the acceptance harness,
 
 In WSL2, use a Linux distribution such as Ubuntu and keep the repository in its Linux filesystem, not a Windows-mounted project directory. Either enable that distribution's Docker Desktop WSL integration or use its own supported Docker Engine installation; verify the selected context with `docker context show`, `docker version` and `docker compose version`. Avoid mixing daemons/contexts. Ensure sufficient Docker/WSL memory and disk allocation. Use LF line endings for shell scripts. Ports are reached from the host through localhost; `127.0.0.1` inside a container refers to that container. Never change the host bind to `0.0.0.0` to troubleshoot WSL access.
 
-## Configure and start
+## Configuration reference
 
-From repository root:
+Use [the quickstart](../quickstart.md) as the single onboarding procedure. It owns the editable `.env` table, Linear key creation, Windmill workspace/secret setup, script import and daily startup. This document retains deployment internals and operational limits.
 
-```bash
-cp -n .env.example .env
-chmod 600 .env
-```
+Compose supplies `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD`, bounded `DB_CONNECT_TIMEOUT` and `WORKFLOW_PERSISTENCE=postgres`. Only the private intake listener receives `PILOT_INTAKE_TOKEN`, `LINEAR_READ_API_KEY` and the four `PILOT_LINEAR_*` identity settings; it disables legacy routes with `LOCAL_DEMO_ROUTES=false`. Python does not automatically load `.env`. Environment values remain inspectable by trusted Docker administrators; this is not a production secret manager.
 
-Use a local editor to generate/set the following values without printing them into logs:
-
-| Variable | Requirement |
-| --- | --- |
-| `POSTGRES_PASSWORD` | Private local bootstrap-admin password, used only by DB/init/migration and test fixtures |
-| `DB_PASSWORD` | Different local `sdlc_app` runtime password |
-| `WINDMILL_DB_PASSWORD` | Third distinct local password; use 64 random hex characters because it is embedded in a database URL |
-| `PILOT_INTAKE_TOKEN` | Separate random local service token, at least 32 characters |
-| `POSTGRES_DB` | Existing platform database name; default `agentic_sdlc`. Do not change it on a retained volume |
-| `API_PORT`, `WINDMILL_PORT` | Host loopback ports, default `8000`/`8001` |
-| `LINEAR_READ_API_KEY` | Optional development read-only Linear key for FastAPI's independent verification; blank disables intake |
-| `PILOT_LINEAR_WORKSPACE_ID`, `PILOT_LINEAR_TEAM_ID`, `PILOT_LINEAR_ISSUE_UUID` | Trusted UUIDs verified against Linear; blank disables intake |
-| `PILOT_LINEAR_PROJECT_ID` | Exact Linear project UUID, or explicit `none` requiring no project assignment; blank disables intake |
-
-The API reads `DB_HOST`, `DB_PORT`, `DB_NAME`, `DB_USER`, `DB_PASSWORD` and bounded `DB_CONNECT_TIMEOUT` as before. Compose supplies these plus `WORKFLOW_PERSISTENCE=postgres`. Only the private intake service receives the integration token/Linear configuration; it sets `LOCAL_DEMO_ROUTES=false`. The localhost API receives no external credential. Python does not automatically load `.env`.
-
-Do not overwrite an existing `.env`. Add new keys manually, preserve existing database passwords, and never share resolved Compose output. `.env.example` deliberately leaves secrets blank. The initializer rejects a Windmill password equal to either other database password. Environment storage is a local convenience: Docker administrators can inspect it; this is not a production secret manager.
-
-```bash
-docker compose config --quiet
-docker compose up --build -d --wait
-docker compose ps
-curl -i http://127.0.0.1:8000/db-health
-```
-
-Open `http://127.0.0.1:8001` for Windmill. Follow the [upstream first-login guidance](https://www.windmill.dev/docs/advanced/self_host#first-time-login), replace the default bootstrap account/password before adding integration secrets, and keep access restricted to trusted local operators. The connector declares `wmill==1.875.0` through Windmill's supported requirements header; Windmill resolves/caches its transitive script lock. Preserve that generated lock for repeated live runs. Configure the manual connector using the [project pilot runbook](../projects/redeeming-light/pilot.md). No public webhook or polling schedule is provisioned. The optional upstream LSP, multiplayer, SMTP proxy and enterprise services are not included.
+[The read-only preflight](../../scripts/setup_check.py) captures resolved Compose configuration in memory and checks service health, applied intake configuration, worker heartbeat and Windmill metadata. Database reads use explicit read-only transactions; secrets are not decrypted or returned. It cannot verify actual Linear permissions or human authorization. It does not change configuration or submit a workflow. The pinned Windmill schema is its metadata compatibility boundary.
 
 ## Services, networks and persistence
 

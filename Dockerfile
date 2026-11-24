@@ -14,6 +14,7 @@ FROM base AS test
 USER root
 RUN pip install --no-cache-dir -c requirements.lock '.[dev]'
 COPY tests ./tests
+COPY scripts ./scripts
 USER 65532:65532
 CMD ["pytest", "-q", "-p", "no:cacheprovider"]
 

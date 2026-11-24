@@ -2,52 +2,13 @@
 
 **Scope:** Local A0/A1 platform using Windmill Community, FastAPI, LangGraph OSS and PostgreSQL/pgvector. RED-6 adds authenticated, project-bound intake and a manual read-only Linear connector to the existing durable draft/review workflow. Codex CLI execution, RAG, GitHub integration and production isolation remain planned. No HTTP approval/resume endpoint exists. See [validation evidence](docs/development/red6-validation.md) for tested versus simulated behavior.
 
-## Quick start in WSL2 Ubuntu
+**Start here: [Docker/WSL2 quickstart and manual RED-5 setup](docs/quickstart.md).** It covers first-time setup, Linear credentials, all six Windmill variables, script import, safe preflight, expected output and daily startup.
 
-```bash
-cd agentic-sdlc-starter
-python3 -m venv .venv
-source .venv/bin/activate
-pip install -c requirements.lock -e '.[dev]'
-pytest -q
-uvicorn app.main:app --host 127.0.0.1 --port 8000
-```
+## Local runtime
 
-In another terminal:
+Use the quickstart for Docker onboarding. Optional Python-only development and its request-local memory preview are documented in [development workflow](docs/development/workflow.md). The preview is not the persistent Windmill pilot. Compose requires PostgreSQL and never silently falls back to memory.
 
-```bash
-curl -s http://127.0.0.1:8000/health
-curl -s -X POST http://127.0.0.1:8000/draft -H 'Content-Type: application/json' -d '{"project_id":"demo","run_id":"r1","objective":"Draft an API design"}'
-```
-
-The Python-only demo defaults to request-local memory previews: `/health` and `/draft` still work; `/db-health` returns HTTP 503 until configured. Python does not automatically load `.env`. Compose requires PostgreSQL persistence; it never silently falls back to memory.
-
-## Docker Compose startup
-
-Requires Docker Engine and Docker Compose v2 or later. Stop a host Uvicorn process first if it already occupies port 8000.
-
-1. Copy `.env.example` to `.env` without overwriting an existing configuration, and restrict its permissions:
-
-   ```bash
-   cp -n .env.example .env
-   chmod 600 .env
-   ```
-
-2. In your local editor, set `POSTGRES_PASSWORD`, `DB_PASSWORD` and `WINDMILL_DB_PASSWORD` to three different randomly generated, local-only passwords. Use URL-safe hex for `WINDMILL_DB_PASSWORD`. Set a separate `PILOT_INTAKE_TOKEN` of at least 32 characters. Blank values intentionally prevent startup. Keep `.env` private and untracked; do not paste it or resolved Compose output into tickets or logs. `POSTGRES_DB` defaults to `agentic_sdlc`. Existing `.env` files need the new Windmill fields added manually. Leave Linear settings blank for infrastructure-only startup; intake will fail closed.
-3. Validate and start:
-
-   ```bash
-   docker compose config --quiet
-   docker compose up --build -d --wait
-   docker compose ps
-   curl -i http://127.0.0.1:8000/db-health
-   ```
-
-Expect HTTP 200 with `{"status":"ok"}` after initialization. Failures return HTTP 503 with `{"status":"unavailable"}`, without credentials or driver details. `/health` remains a process health check; `/db-health` checks a database query and that the vector extension is enabled.
-
-The database uses `pgvector/pgvector:0.8.7-pg17-bookworm` pinned to an immutable multi-platform digest in [compose.yaml](compose.yaml). PostgreSQL 17 is a [supported major version](https://www.postgresql.org/support/versioning/); see the [upstream pgvector image documentation](https://github.com/pgvector/pgvector#docker). Upgrading requires deliberate tag/digest review.
-
-The compatibility API publishes only `127.0.0.1:8000` (`API_PORT`). Windmill UI publishes only `127.0.0.1:8001` (`WINDMILL_PORT`). The same FastAPI application runs a private `intake` listener with `/draft`, docs and other routes disabled. Windmill workers reach `http://intake:8000/v1/intake` on the internal `control` network; they share no network with the compatibility API. PostgreSQL has no host port. Separate private database networks and database CONNECT privileges separate platform and Windmill credentials. See [local deployment](docs/development/deployment.md) for network, secret, health, resource and WSL2 details. Standalone Dockerfile execution still defaults to loopback binding.
+The compatibility API publishes only on host loopback, and Windmill reaches a separate private intake listener with legacy routes disabled. PostgreSQL has no host port. The existing PostgreSQL/pgvector volume, migrations and graph/review gates are retained. Advanced network, configuration and resource details remain in [deployment](docs/development/deployment.md).
 
 ## Initialization and configuration
 
@@ -63,7 +24,7 @@ The original entrypoint initialization runs only once; the additive `migrate` an
 
 Windmill handles manual invocation and read-only Linear lookup. FastAPI authenticates a scoped service token, validates the contract, independently verifies Linear identity, and deduplicates the event in PostgreSQL. LangGraph executes the existing `draft-review-v1` graph and saves a real human-review interrupt. Duplicate intake reads that state; it never resumes or approves it. The objective and planning response are deterministic, not model-generated work.
 
-Configure the trusted workspace/team/issue/project binding and import [the manual script](windmill/red5_linear_dispatch.py) using the [pilot runbook](docs/projects/redeeming-light/pilot.md). No polling, public webhook or production credential is enabled. The pilot does not complete the website issue.
+Configure the trusted workspace/team/issue/project binding and import [the manual script](windmill/red5_linear_dispatch.py) using the [quickstart](docs/quickstart.md). No polling, public webhook or production credential is enabled. The pilot does not complete the website issue.
 
 ## Tests and persistence verification
 
@@ -128,6 +89,7 @@ The `postgres_data` named volume survives container recreation and ordinary `doc
 
 ## Documentation
 
+- [Quickstart](docs/quickstart.md): first-time onboarding and daily startup.
 - [AGENTS.md](AGENTS.md): shared coding-agent instructions and selective context loading.
 - [CLAUDE.md](CLAUDE.md): thin Claude Code adapter to the shared instructions.
 - [Local deployment](docs/development/deployment.md): Compose, configuration, resources and WSL2.

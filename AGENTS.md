@@ -5,6 +5,7 @@
 - Inspect relevant code, configuration and tests before editing. Preserve working behavior; keep changes within the requested scope.
 - Make small, reviewable changes. For code changes, run `pytest -q`; for documentation changes, check local links and factual claims. Report changed files, checks and limitations.
 - Do not commit, publish or modify external systems without explicit task authorization.
+- End every implementation task with actionable next steps directly in the chat response. Include exact commands and any remaining manual UI configuration; a documentation link alone is insufficient.
 
 ## Architecture
 - Keep shared instructions provider-independent; provider files should be thin adapters.
